@@ -113,7 +113,7 @@ void double_score_win(void)
   
   dungeon_red();   // Leave the dungeon red.
   j=0x20;
-  for (i=0;i<150;++i) // This effect lasts for 150 frames (or 3 seconds at our 50 drop rate)
+  for (i=0;i<150;i++) // This effect lasts for 150 frames (or 3 seconds at our 50 drop rate)
     {
       pal_col(0,j);
       if (j==0x3C)
@@ -134,7 +134,7 @@ void double_score_win(void)
  */
 void ready_blue_player(void)
 {
-  stamps[STAMP_XTRA_A(1)]=3; // Player is in the box.
+  stamps[STAMP_TIMER(1)]=3; // Player is in the box.
   stamps[STAMP_X(1)]=PIXEL_BOX_X(0);
   stamps[STAMP_Y(1)]=PIXEL_BOX_Y(6)-1; // 6 is the special spawn box.
   stamps[STAMP_TYPE(1)]=STAMP_TYPE_BLUE_WORRIOR;
@@ -149,7 +149,7 @@ void ready_blue_player(void)
  */
 void ready_yellow_player(void)
 {
-  stamps[STAMP_XTRA_A(0)]=6;
+  stamps[STAMP_TIMER(0)]=6;
   stamps[STAMP_X(0)]=PIXEL_BOX_X(9);
   stamps[STAMP_Y(0)]=PIXEL_BOX_Y(6)-1; // 6 is the special spawn box.
   stamps[STAMP_TYPE(0)]=STAMP_TYPE_YELLOW_WORRIOR;
@@ -179,10 +179,13 @@ void setup_enemy_sprites(void)
       stamps[STAMP_X(i)]=PIXEL_BOX_X(a);
       stamps[STAMP_Y(i)]=PIXEL_BOX_Y(b);
       stamps[STAMP_TYPE(i)]=STAMP_TYPE_BURWOR;
-      stamps[STAMP_STATE(i)]=0; // Default to right
-      stamps[STAMP_FRAME(i)]=0; // First frame.
+      stamps[STAMP_STATE(i)]=rand8()&0x03; // Random initial state.
+      stamps[STAMP_FRAME(i)]=rand8()&0x03; // Random enemy frame.
       stamps[STAMP_DELAY(i)]=4; // TODO: Change this per level.
     }
+  // Temporary code to test all monster types
+  stamps[STAMP_TYPE(5)]=stamps[STAMP_TYPE(6)]=STAMP_TYPE_GORWOR;
+  stamps[STAMP_TYPE(7)]=STAMP_TYPE_THORWOR;
 }
 
 /**
@@ -191,13 +194,15 @@ void setup_enemy_sprites(void)
  */
 void animate_stamps(void)
 {
-  for (i=0;i<STAMP_NUM_SLOTS;++i)
+  for (i=0;i<STAMP_NUM_SLOTS;i++)
     {
       if (stamps[STAMP_DELAY(i)]==0)
 	{
 	  stamps[STAMP_FRAME(i)]=(stamps[STAMP_FRAME(i)]+1)&0x03;
 	  if (i>1) // Delay only applies to enemies.
 	    stamps[STAMP_DELAY(i)]=4;
+	  else
+	    stamps[STAMP_DELAY(i)]=1;
 	}
       else
 	{
@@ -235,9 +240,8 @@ unsigned char stamp_type_to_radar(unsigned char t)
  */
 void update_radar(void)
 {
-  // Currently am hard-coding to place self immediately after the 8th player sprite slot.
-  spr=192;
-  for (i=2;i<STAMP_NUM_SLOTS;++i)
+  spr=OAM_OFFSET_RADAR;
+  for (i=2;i<STAMP_NUM_SLOTS;i++)
     {
       spr = oam_spr(STAMP_X_TO_RADAR(stamps[STAMP_X(i)]),STAMP_Y_TO_RADAR(stamps[STAMP_Y(i)]),stamp_type_to_radar(stamps[STAMP_TYPE(i)]),0,spr);
     }
@@ -255,11 +259,39 @@ void update_radar(void)
 void get_current_box(void)
 {
   a=div24(stamps[STAMP_X(i)]+8);
-  b=div24(stamps[STAMP_Y(i)]+8);
+  b=div24(stamps[STAMP_Y(i)]-8);
   c=(b*10)+a; // C is now the box #
   d=dungeon[c];
-  score1[0]=div24(stamps[STAMP_X(0)]+8)+1;
-  score1[1]=div24(stamps[STAMP_Y(0)]+8)+1;
+}
+
+/**
+ * monster_change_direction()
+ * Change monster direction.
+ */
+void monster_change_direction(void)
+{
+ change_direction:
+  stamps[STAMP_STATE(i)]=rand8()&0x03;
+  if (stamps[STAMP_STATE(i)]==STATE_MONSTER_LEFT && stamps[STAMP_X(i)]==PIXEL_BOX_X(0) && stamps[STAMP_Y(i)]==PIXEL_BOX_Y(2) && teleport_state==OPEN)
+    {
+      teleport_timer=2;
+      teleport_state=CLOSED;
+      stamps[STAMP_X(i)]=PIXEL_BOX_X(9);
+    }
+  else if (stamps[STAMP_STATE(i)]==STATE_MONSTER_RIGHT && stamps[STAMP_X(i)]==PIXEL_BOX_X(9) && stamps[STAMP_Y(i)]==PIXEL_BOX_Y(2) && teleport_state==OPEN)
+    {
+      teleport_timer=2;
+      teleport_state=CLOSED;
+      stamps[STAMP_X(i)]=PIXEL_BOX_X(0);
+    }
+  else if (stamps[STAMP_STATE(i)]==STATE_MONSTER_LEFT && BOX_WALL_LEFT(d))
+    goto change_direction;
+  else if (stamps[STAMP_STATE(i)]==STATE_MONSTER_RIGHT && BOX_WALL_RIGHT(d))
+    goto change_direction;
+  else if (stamps[STAMP_STATE(i)]==STATE_MONSTER_UP && BOX_WALL_UP(d))
+    goto change_direction;
+  else if (stamps[STAMP_STATE(i)]==STATE_MONSTER_DOWN && BOX_WALL_DOWN(d))
+    goto change_direction;
 }
 
 /**
@@ -268,82 +300,41 @@ void get_current_box(void)
  */
 void move_monsters(void)
 {
-  for (i=2;i<STAMP_NUM_SLOTS;++i)
+  for (i=2;i<STAMP_NUM_SLOTS;i++)
     {
       get_current_box();
-      if (stamps[STAMP_STATE(i)] == STATE_MONSTER_RIGHT)
+      if ((stamps[STAMP_X(i)]==PIXEL_BOX_X(a)) && (stamps[STAMP_Y(i)]==PIXEL_BOX_Y(b)))
 	{
-	  if (d&1<<4)
-	    {
-	      if (stamps[STAMP_X(i)]==PIXEL_BOX_X(a))
-		{
-		  stamps[STAMP_STATE(i)]=rand8()&0x03;
-		}
-	      else
-		{
-		  stamps[STAMP_X(i)]++;
-		}
-	    }
-	  else
-	    {
-	      stamps[STAMP_X(i)]++;
-	    }
+	  monster_change_direction();
 	}
-      else if (stamps[STAMP_STATE(i)] == STATE_MONSTER_LEFT)
+      else
 	{
-	  if (d&1<<6)
-	    {
-	      if (stamps[STAMP_X(i)]==PIXEL_BOX_X(a))
-		{
-		  stamps[STAMP_STATE(i)]=rand8()&0x03;
-		}
-	      else
-		{
-		  stamps[STAMP_X(i)]--;
-		}
-	    }
+	  // We are not aligned.
+	  if (stamps[STAMP_STATE(i)]==STATE_MONSTER_RIGHT && stamps[STAMP_LAST_STATE(i)]==STATE_MONSTER_LEFT)
+	    stamps[STAMP_STATE(i)]=STATE_MONSTER_RIGHT;
+	  else if (stamps[STAMP_STATE(i)]==STATE_MONSTER_LEFT && stamps[STAMP_LAST_STATE(i)]==STATE_MONSTER_RIGHT)
+	    stamps[STAMP_STATE(i)]=STATE_MONSTER_LEFT;
+	  else if (stamps[STAMP_STATE(i)]==STATE_MONSTER_UP && stamps[STAMP_LAST_STATE(i)]==STATE_MONSTER_DOWN)
+	    stamps[STAMP_STATE(i)]=STATE_MONSTER_UP;
+	  else if (stamps[STAMP_STATE(i)]==STATE_MONSTER_DOWN && stamps[STAMP_LAST_STATE(i)]==STATE_PLAYER_UP)
+	    stamps[STAMP_STATE(i)]=STATE_MONSTER_DOWN;
 	  else
-	    {
-	      stamps[STAMP_X(i)]--;
-	    }
+	    stamps[STAMP_STATE(i)]=stamps[STAMP_LAST_STATE(i)];
 	  
 	}
-      else if (stamps[STAMP_STATE(i)] == STATE_MONSTER_UP)
-	{
-	  if (d&1<<7)
-	    {
-	      if (stamps[STAMP_Y(i)]==PIXEL_BOX_Y(b))
-		{
-		  stamps[STAMP_STATE(i)]=rand8()&0x03;
-		}
-	      else
-		{
-		  stamps[STAMP_Y(i)]--;
-		}
-	    }
-	  else
-	    {
-	      stamps[STAMP_Y(i)]--;
-	    }
-	}
-      else if (stamps[STAMP_STATE(i)] == STATE_MONSTER_DOWN)
-	{
-	  if (d&1<<5)
-	    {
-	      if (stamps[STAMP_Y(i)]==PIXEL_BOX_Y(b))
-		{
-		  stamps[STAMP_STATE(i)]=rand8()&0x03;
-		}
-	      else
-		{
-		  stamps[STAMP_Y(i)]++;
-		}
-	    }
-	  else
-	    {
-	      stamps[STAMP_Y(i)]++;
-	    }
-	}
+      
+      // Handle state movement
+      if (stamps[STAMP_STATE(i)]==STATE_MONSTER_RIGHT)
+	stamps[STAMP_X(i)]++;
+      else if (stamps[STAMP_STATE(i)]==STATE_MONSTER_LEFT)
+	stamps[STAMP_X(i)]--;
+      else if (stamps[STAMP_STATE(i)]==STATE_MONSTER_UP)
+	stamps[STAMP_Y(i)]--;
+      else if (stamps[STAMP_STATE(i)]==STATE_MONSTER_DOWN)
+	stamps[STAMP_Y(i)]++;
+
+      stamps[STAMP_LAST_STATE(i)]=stamps[STAMP_STATE(i)];  
+      
     }
 }
 
@@ -379,26 +370,45 @@ void handle_player_in_field(void)
   if ((stamps[STAMP_X(i)]==PIXEL_BOX_X(a)) && (stamps[STAMP_Y(i)]==PIXEL_BOX_Y(b)))
     {
       // We are aligned.
-      if (PLAYER_PAD_RIGHT(i) && !BOX_WALL_RIGHT(d))
-	stamps[STAMP_STATE(i)]=stamps[STAMP_LAST_STATE(i)]=STATE_PLAYER_RIGHT;
-      else if (PLAYER_PAD_LEFT(i) && !BOX_WALL_LEFT(d))
-	stamps[STAMP_STATE(i)]=stamps[STAMP_LAST_STATE(i)]=STATE_PLAYER_LEFT;
-      else if (PLAYER_PAD_UP(i) && !BOX_WALL_UP(d))
-	stamps[STAMP_STATE(i)]=stamps[STAMP_LAST_STATE(d)]=STATE_PLAYER_UP;
-      else if (PLAYER_PAD_DOWN(i) && !BOX_WALL_DOWN(d))
-	stamps[STAMP_STATE(i)]=stamps[STAMP_LAST_STATE(d)]=STATE_PLAYER_DOWN;
+      if (PLAYER_PAD_LEFT(i) && stamps[STAMP_LAST_STATE(i)] != STATE_PLAYER_RIGHT && stamps[STAMP_X(i)]==PIXEL_BOX_X(0) && stamps[STAMP_Y(i)]==PIXEL_BOX_Y(2) && teleport_state == OPEN)
+	{
+	  stamps[STAMP_X(i)]=PIXEL_BOX_X(9);
+	  teleport_state=CLOSED;
+	  teleport_timer=2;	  
+	}
+      else if (PLAYER_PAD_RIGHT(i) && stamps[STAMP_LAST_STATE(i)] != STATE_PLAYER_LEFT && stamps[STAMP_X(i)]==PIXEL_BOX_X(9) && stamps[STAMP_Y(i)]==PIXEL_BOX_Y(2) && teleport_state == OPEN)
+	{
+	  stamps[STAMP_X(i)]=PIXEL_BOX_X(0);
+	  teleport_state=CLOSED;
+	  teleport_timer=2;
+	}
+      else if (PLAYER_PAD_RIGHT(i) && stamps[STAMP_LAST_STATE(i)] != STATE_PLAYER_RIGHT && !BOX_WALL_RIGHT(d))
+      	stamps[STAMP_STATE(i)]=stamps[STAMP_LAST_STATE(i)]=STATE_PLAYER_RIGHT;
+      else if (PLAYER_PAD_LEFT(i) && stamps[STAMP_LAST_STATE(i)] != STATE_PLAYER_LEFT && !BOX_WALL_LEFT(d))
+      	stamps[STAMP_STATE(i)]=stamps[STAMP_LAST_STATE(i)]=STATE_PLAYER_LEFT;
+      else if (PLAYER_PAD_UP(i) && stamps[STAMP_LAST_STATE(i)] != STATE_PLAYER_UP && !BOX_WALL_UP(d))
+	stamps[STAMP_STATE(i)]=stamps[STAMP_LAST_STATE(i)]=STATE_PLAYER_UP;
+      else if (PLAYER_PAD_DOWN(i) && stamps[STAMP_LAST_STATE(i)] != STATE_PLAYER_DOWN && !BOX_WALL_DOWN(d))
+      	stamps[STAMP_STATE(i)]=stamps[STAMP_LAST_STATE(i)]=STATE_PLAYER_DOWN;
       else if (PLAYER_PAD_IDLE(i))
-	  handle_pad_idle();
+	handle_pad_idle();
       
-      /* if (PLAYER_PAD_RIGHT(i) && BOX_WALL_RIGHT(d)) */
-      /* 	stamps[STAMP_STATE(i)]=STATE_PLAYER_RIGHT_IDLE; */
-      /* else if (PLAYER_PAD_LEFT(i) && BOX_WALL_LEFT(d)) */
-      /* 	stamps[STAMP_STATE(i)]=STATE_PLAYER_LEFT_IDLE; */
-      /* else if (PLAYER_PAD_UP(i) && BOX_WALL_UP(d)) */
-      /* 	stamps[STAMP_STATE(i)]=STATE_PLAYER_UP_IDLE; */
-      /* else if (PLAYER_PAD_DOWN(i) && BOX_WALL_DOWN(d)) */
-      /* 	stamps[STAMP_STATE(i)]=STATE_PLAYER_DOWN_IDLE; */
-      
+      if (stamps[STAMP_LAST_STATE(i)]==STATE_PLAYER_LEFT && stamps[STAMP_X(i)]==PIXEL_BOX_X(0) && stamps[STAMP_Y(i)]==PIXEL_BOX_Y(2) && teleport_state == OPEN)
+	{
+ 	  stamps[STAMP_STATE(i)]=STATE_PLAYER_LEFT;
+	}
+      else if (stamps[STAMP_LAST_STATE(i)]==STATE_PLAYER_RIGHT && stamps[STAMP_X(i)]==PIXEL_BOX_X(9) && stamps[STAMP_Y(i)]==PIXEL_BOX_Y(2) && teleport_state == OPEN)
+	{
+	  stamps[STAMP_STATE(i)]=STATE_PLAYER_RIGHT;
+	}
+      else if (stamps[STAMP_LAST_STATE(i)]==STATE_PLAYER_RIGHT && BOX_WALL_RIGHT(d))
+      	stamps[STAMP_STATE(i)]=STATE_PLAYER_RIGHT_IDLE;
+      else if (stamps[STAMP_LAST_STATE(i)]==STATE_PLAYER_LEFT && BOX_WALL_LEFT(d))
+      	stamps[STAMP_STATE(i)]=STATE_PLAYER_LEFT_IDLE;
+      else if (stamps[STAMP_LAST_STATE(i)]==STATE_PLAYER_UP && BOX_WALL_UP(d))
+	stamps[STAMP_STATE(i)]=STATE_PLAYER_UP_IDLE;
+      else if (stamps[STAMP_LAST_STATE(i)]==STATE_PLAYER_DOWN && BOX_WALL_DOWN(d))
+      	stamps[STAMP_STATE(i)]=STATE_PLAYER_DOWN_IDLE;
     }
   else
     {
@@ -415,21 +425,22 @@ void handle_player_in_field(void)
 	stamps[STAMP_STATE(i)]=STATE_PLAYER_DOWN;
       else
 	stamps[STAMP_STATE(i)]=stamps[STAMP_LAST_STATE(i)];
+      
     }
   
   // Handle state movement
   if (stamps[STAMP_STATE(i)]==STATE_PLAYER_RIGHT)
-    stamps[STAMP_X(i)]++;
+    stamps[STAMP_X(i)]+=2;
   else if (stamps[STAMP_STATE(i)]==STATE_PLAYER_LEFT)
-    stamps[STAMP_X(i)]--;
+    stamps[STAMP_X(i)]-=2;
   else if (stamps[STAMP_STATE(i)]==STATE_PLAYER_UP)
-    stamps[STAMP_Y(i)]--;
+    stamps[STAMP_Y(i)]-=2;
   else if (stamps[STAMP_STATE(i)]==STATE_PLAYER_DOWN)
-    stamps[STAMP_Y(i)]++;
-
+    stamps[STAMP_Y(i)]+=2;
+  
   // And set last state, if we aren't idle.
   if (!PLAYER_PAD_IDLE(i))
-    stamps[STAMP_LAST_STATE(i)]=stamps[STAMP_STATE(i)];
+    stamps[STAMP_LAST_STATE(i)]=stamps[STAMP_STATE(i)];  
 }
 
 /**
@@ -438,17 +449,17 @@ void handle_player_in_field(void)
  */
 void handle_player_in_box(void)
 {
-  if (stamps[STAMP_XTRA_A(i)]>0)
+  if (stamps[STAMP_TIMER(i)]>0)
     {
-      if (stamps[STAMP_XTRA_B(i)] != 0)
+      if (stamps[STAMP_PAD(i)] != 0)
 	{
-	  stamps[STAMP_XTRA_A(i)]=0;
+	  stamps[STAMP_TIMER(i)]=0;
 	}
       else
 	{
 	  stamps[STAMP_Y(i)]=PIXEL_BOX_Y(6)-1; // 6 is the Y for the box.
 	  if (sec==0) // 0 means approximately 1 second elapsed.
-	    stamps[STAMP_XTRA_A(i)]--;         // Decrement timer
+	    stamps[STAMP_TIMER(i)]--;         // Decrement timer
 	}
     }
   else
@@ -456,10 +467,12 @@ void handle_player_in_box(void)
       stamps[STAMP_Y(i)]=PIXEL_BOX_Y(5); // Pop out of box.
       if (i==0)
 	{
+	  stamps[STAMP_STATE(i)]=stamps[STAMP_LAST_STATE(i)]=STATE_PLAYER_LEFT_IDLE;
 	  yellow_door_state=CLOSED;
 	}
       else
 	{
+	  stamps[STAMP_STATE(i)]=stamps[STAMP_LAST_STATE(i)]=STATE_PLAYER_RIGHT_IDLE;
 	  blue_door_state=CLOSED;
 	}
     }
@@ -470,10 +483,10 @@ void handle_player_in_box(void)
  */
 void move_players(void)
 {
-  for (i=0;i<2;++i)
+  for (i=0;i<2;i++)
     {
       get_current_box();
-      stamps[STAMP_XTRA_B(i)]=pad_poll(i);
+      stamps[STAMP_PAD(i)]=pad_poll(i);
      
       if (stamps[STAMP_Y(i)]==PIXEL_BOX_Y(6)-1)
 	{
@@ -512,7 +525,7 @@ void run_dungeon(unsigned char dungeon_num)
   vram_adr(adr);
   a=c=d=0;
 
-  for (i=0;i<2;++i)
+  for (i=0;i<2;i++)
     {
       for (j=0;j<b;++j)
   	{
@@ -551,12 +564,12 @@ void run_dungeon(unsigned char dungeon_num)
   
   b=0;  // dungeon array index
 
-  for (i=0;i<6;++i)
+  for (i=0;i<6;i++)
     {
       for (j=0;j<10;++j)
   	{
   	  /* Tile 1 */
-  	  vram_adr(NTADR_A((j*3)+1,(i*3)+1));
+  	  vram_adr(NTADR_A((j*3)+1,(i*3)+2));
   	  if (( (dungeon[b] & 1<<7) ) && ( (dungeon[b] & 1<<6) ))            /* UP AND LEFT */
   	    {
   	      if ( (dungeon[b] & 1<<3) )                          /* LEFT WITH TELEPORT */
@@ -630,7 +643,7 @@ void run_dungeon(unsigned char dungeon_num)
   	      vram_put(0x00);
   	    }
 
-  	  vram_adr(NTADR_A((j*3)+1,(i*3)+2));
+  	  vram_adr(NTADR_A((j*3)+1,(i*3)+3));
   	  // Tile 4
   	  if (dungeon[b] & (1<<6))            /* LEFT */
   	    {
@@ -669,7 +682,7 @@ void run_dungeon(unsigned char dungeon_num)
   	    }
 	  
 
-  	  vram_adr(NTADR_A((j*3)+1,(i*3)+3));
+  	  vram_adr(NTADR_A((j*3)+1,(i*3)+4));
   	  // Tile 7
   	  if (( (dungeon[b] & 1<<6) ) && ( (dungeon[b] & 1<<5) ))            /* LEFT AND DOWN */
   	    {
@@ -761,8 +774,7 @@ void run_dungeon(unsigned char dungeon_num)
   setup_enemy_sprites();
   ready_yellow_player();
   ready_blue_player();
-  a=spr=0;
-  i=0;
+  a=spr=OAM_OFFSET_TOP;
 
   music_play(1);
   
@@ -779,7 +791,6 @@ void run_dungeon(unsigned char dungeon_num)
       /* yellow_door_state=OPEN; */
       /* add_points(0); */
       /* add_points(1); */
-      /* teleport_state=CLOSED; */
 
       animate_stamps();
       move_monsters();
@@ -804,6 +815,7 @@ void run_dungeon(unsigned char dungeon_num)
       
       update_stamps();
       update_radar();
+      update_teleport_timer();
      
       // VRAM update scheduler
       
@@ -889,7 +901,7 @@ void attract_monsters(void)
   bank_spr(1);
   bank_bg(0);
 
-  spr=0;
+  spr=OAM_OFFSET_TOP;
   spr = oam_meta_spr(120,8,spr,metasprite_list[21]);
   spr = oam_meta_spr(120,36,spr,metasprite_list[33]);
   spr = oam_meta_spr(120,68,spr,metasprite_list[45]);
@@ -924,12 +936,12 @@ void set_teleport(unsigned char openclose)
   clear_update_buffer();
 
   // Set the addresses for the two teleport regions.
-  update_buffer[0]=MSB(NTADR_A(1,7))|NT_UPD_VERT;
-  update_buffer[1]=LSB(NTADR_A(1,7));
+  update_buffer[0]=MSB(NTADR_A(1,8))|NT_UPD_VERT;
+  update_buffer[1]=LSB(NTADR_A(1,8));
   update_buffer[2]=3;
 
-  update_buffer[6]=MSB(NTADR_A(30,7))|NT_UPD_VERT;
-  update_buffer[7]=LSB(NTADR_A(30,7));
+  update_buffer[6]=MSB(NTADR_A(30,8))|NT_UPD_VERT;
+  update_buffer[7]=LSB(NTADR_A(30,8));
   update_buffer[8]=3;
 
   // and fill in the tiles in the data section.
@@ -939,7 +951,29 @@ void set_teleport(unsigned char openclose)
 
   update_buffer[9]=(openclose==0?0x78:0x7A);
   update_buffer[10]=(openclose==0?0x78:0x7A);
-  update_buffer[11]=(openclose==0?0x78:0x7A);  
+  update_buffer[11]=(openclose==0?0x78:0x7A);
+}
+
+/**
+ * update_teleport_timer()
+ */
+void update_teleport_timer(void)
+{
+  if (teleport_state==CLOSED)
+    {
+      if (teleport_timer==0)
+	teleport_state=OPEN;
+      else if (sec==0)
+	teleport_timer--;
+    }
+  else if (teleport_state==OPEN)
+    {
+      // don't do anything...yet.
+    }
+  else
+    {
+      teleport_state=OPEN;
+    }
 }
 
 /**
@@ -951,30 +985,30 @@ void update_doors()
   clear_update_buffer();
 
   // Update VRAM reflecting door states, two rows, two sets of 3 tiles each row.
-  update_buffer[0]=MSB(NTADR_A(1,18))|NT_UPD_HORZ;
-  update_buffer[1]=LSB(NTADR_A(1,18));
+  update_buffer[0]=MSB(NTADR_A(1,19))|NT_UPD_HORZ;
+  update_buffer[1]=LSB(NTADR_A(1,19));
   update_buffer[2]=3;
   update_buffer[3]=(blue_door_state==0?0x65:0x76);
   update_buffer[4]=(blue_door_state==0?0x00:0x64);
   update_buffer[5]=(blue_door_state==0?0x00:0x64);
-  update_buffer[6]=MSB(NTADR_A(28,18))|NT_UPD_HORZ;
-  update_buffer[7]=LSB(NTADR_A(28,18));
+  update_buffer[6]=MSB(NTADR_A(28,19))|NT_UPD_HORZ;
+  update_buffer[7]=LSB(NTADR_A(28,19));
   update_buffer[8]=3;
   update_buffer[9]=(yellow_door_state==0?0x00:0x64);
   update_buffer[10]=(yellow_door_state==0?0x00:0x64);
   update_buffer[11]=(yellow_door_state==0?0x66:0x77);
-  update_buffer[12]=MSB(NTADR_A(1,19))|NT_UPD_HORZ;
-  update_buffer[13]=LSB(NTADR_A(1,19));
+  update_buffer[12]=MSB(NTADR_A(1,20))|NT_UPD_HORZ;
+  update_buffer[13]=LSB(NTADR_A(1,20));
   update_buffer[14]=3;
-  update_buffer[15]=(blue_door_state==0?0x65:0x74);
+  update_buffer[15]=(blue_door_state==0?0x61:0x67);
   update_buffer[16]=(blue_door_state==0?0x00:0x63);
   update_buffer[17]=(blue_door_state==0?0x00:0x63);
-  update_buffer[18]=MSB(NTADR_A(28,19))|NT_UPD_HORZ;
-  update_buffer[19]=LSB(NTADR_A(28,19));
+  update_buffer[18]=MSB(NTADR_A(28,20))|NT_UPD_HORZ;
+  update_buffer[19]=LSB(NTADR_A(28,20));
   update_buffer[20]=3;
-  update_buffer[21]=(yellow_door_state==0?0x00:0x63);
-  update_buffer[22]=(yellow_door_state==0?0x00:0x63);
-  update_buffer[23]=(yellow_door_state==0?0x66:0x75);
+  update_buffer[21]=(yellow_door_state==0?0x00:0x62);
+  update_buffer[22]=(yellow_door_state==0?0x00:0x62);
+  update_buffer[23]=(yellow_door_state==0?0x60:0x68);
 }
 
 /**
@@ -1051,16 +1085,16 @@ void update_box_timers(void)
 {
   a=0xff;
   clear_update_buffer();
-  for (i=0;i<2;++i)
+  for (i=0;i<2;i++)
     {
-      update_buffer[++a]=MSB(NTADR_A((i==1?5:26),19))|NT_UPD_VERT;
-      update_buffer[++a]=LSB(NTADR_A((i==1?5:26),19));
+      update_buffer[++a]=MSB(NTADR_A((i==1?5:26),20))|NT_UPD_VERT;
+      update_buffer[++a]=LSB(NTADR_A((i==1?5:26),20));
       update_buffer[++a]=2;
       
-      if (stamps[STAMP_XTRA_A(i)]>0)
+      if (stamps[STAMP_TIMER(i)]>0)
 	{
-	  update_buffer[++a]=stamps[STAMP_XTRA_A(i)];
-	  update_buffer[++a]=stamps[STAMP_XTRA_A(i)]+0x10;
+	  update_buffer[++a]=stamps[STAMP_TIMER(i)];
+	  update_buffer[++a]=stamps[STAMP_TIMER(i)]+0x10;
 	}
       else
 	{
@@ -1087,11 +1121,34 @@ void clear_update_buffer(void)
 }
 
 /**
+ * is_stamp_visible()
+ * given stamp i, see if it actually is visible, or needs to be moved offscreen.
+ */
+unsigned char is_stamp_visible(void)
+{
+  if (stamps[STAMP_TYPE(i)]==STAMP_TYPE_BURWOR ||
+      stamps[STAMP_TYPE(i)]==STAMP_TYPE_BLUE_WORRIOR ||
+      stamps[STAMP_TYPE(i)]==STAMP_TYPE_YELLOW_WORRIOR ||
+      stamps[STAMP_TYPE(i)]==STAMP_TYPE_WORLUK)
+    return TRUE;
+
+  // utterly naive proximity detection, but it should be fast.
+  if ( (BOX_PIXEL_X(stamps[STAMP_X(0)]) == BOX_PIXEL_X(stamps[STAMP_X(i)])) ||
+       (BOX_PIXEL_Y(stamps[STAMP_Y(0)]) == BOX_PIXEL_Y(stamps[STAMP_Y(i)])) ||
+       (BOX_PIXEL_X(stamps[STAMP_X(1)]) == BOX_PIXEL_X(stamps[STAMP_X(i)])) ||
+       (BOX_PIXEL_Y(stamps[STAMP_Y(1)]) == BOX_PIXEL_Y(stamps[STAMP_X(i)])) )
+    return TRUE;
+ 
+  
+  return FALSE;
+}
+
+/**
  * update_stamps() - Update the on-screen stamps
  */
 void update_stamps(void)
 {
-  spr=0;
+  spr=OAM_OFFSET_TOP;
   oam_clear();
   for (i=0;i<STAMP_NUM_SLOTS;i++)
     {
@@ -1102,7 +1159,15 @@ void update_stamps(void)
       else
 	{
 	  a=metasprite_animation_data[stamps[STAMP_TYPE(i)]+(stamps[STAMP_STATE(i)]*4)+stamps[STAMP_FRAME(i)]];
-	  spr = oam_meta_spr(stamps[STAMP_X(i)],stamps[STAMP_Y(i)],spr,metasprite_list[a]);
+	  if (is_stamp_visible())
+	    {
+	      b=stamps[STAMP_X(i)];
+	      c=stamps[STAMP_Y(i)];
+	    }
+	  else
+	    b=c=0xF8; // Offscreen
+  
+	  spr = oam_meta_spr(b,c,spr,metasprite_list[a]);
 	}
     }
 }
@@ -1112,6 +1177,7 @@ void update_stamps(void)
  */
 void init(void)
 {
+  ppu_mask(0x00);
   clear_update_buffer();
   clear_stamps();
 }
